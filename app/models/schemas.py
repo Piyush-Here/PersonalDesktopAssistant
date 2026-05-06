@@ -39,16 +39,26 @@ class PlanStep(BaseModel):
     tool: str
     target: str
     risk_level: RiskLevel
+    risk_score: int = Field(default=0, ge=0, le=100)
+    risk_reasons: list[str] = Field(default_factory=list)
     requires_confirmation: bool
     status: StepStatus = StepStatus.PENDING
     preview: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class RiskAssessment(BaseModel):
+    score: int = Field(ge=0, le=100)
+    level: RiskLevel
+    requires_confirmation: bool
+    reasons: list[str] = Field(default_factory=list)
+
+
 class Plan(BaseModel):
     summary: str
     steps: list[PlanStep]
     requires_confirmation: bool
+    risk_assessment: RiskAssessment
 
 
 class ExecutionResult(BaseModel):

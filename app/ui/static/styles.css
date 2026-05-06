@@ -124,6 +124,32 @@ form button, .approve {
   font-size: 0.92rem;
 }
 
+.risk {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 12px 0 4px;
+  font-weight: 700;
+}
+
+.risk.low {
+  background: rgba(29, 107, 87, 0.1);
+  color: #145443;
+}
+
+.risk.medium {
+  background: rgba(181, 81, 45, 0.12);
+  color: #7a321b;
+}
+
+.risk.high {
+  background: rgba(158, 42, 43, 0.12);
+  color: #7f1d1d;
+}
+
 ul {
   margin: 8px 0 0;
   padding-left: 18px;

@@ -13,6 +13,7 @@ from app.models.schemas import (
     StepStatus,
     UserRequest,
 )
+from app.services.local_model import LocalModelClient, LocalModelStatus
 from app.services.session_store import SessionStore
 from app.services.tool_registry import ToolRegistry
 
@@ -21,12 +22,15 @@ class AssistantService:
     def __init__(self) -> None:
         self.planner = Planner()
         self.tools = ToolRegistry()
+        self.local_model = LocalModelClient()
         self.store = SessionStore(Path("data") / "sessions")
 
     def handle_request(self, payload: UserRequest) -> AssistantReply:
         plan = self.planner.build_plan(payload)
         session = ActionSession(request=payload, plan=plan)
         observations: list[str] = []
+        model_status = self.local_model.status()
+        observations.append(f"Local model: {model_status.message}")
 
         for step in session.plan.steps:
             result = self.tools.inspect(step)
@@ -93,6 +97,9 @@ class AssistantService:
 
         message = "Plan executed." if all_success else "Plan finished with one or more failures."
         return ExecutionResult(success=all_success, message=message, details=details)
+
+    def model_status(self) -> LocalModelStatus:
+        return self.local_model.status()
 
 
 assistant_service = AssistantService()

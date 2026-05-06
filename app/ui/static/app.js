@@ -51,7 +51,19 @@ function renderReply(data) {
   waitingForConfirmation = data.plan.requires_confirmation && !data.execution_result;
   responsePanel.classList.remove("hidden");
 
-  summary.innerHTML = `<div class="card"><strong>Summary</strong><p>${escapeHtml(data.summary)}</p></div>`;
+  const risk = data.plan.risk_assessment;
+  const riskReasons = (risk.reasons || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  summary.innerHTML = `
+    <div class="card">
+      <strong>Summary</strong>
+      <p>${escapeHtml(data.summary)}</p>
+      <div class="risk ${escapeHtml(risk.level)}">
+        <span>Risk ${escapeHtml(risk.score)} / 100</span>
+        <span>${escapeHtml(risk.level)}</span>
+      </div>
+      <ul>${riskReasons}</ul>
+    </div>
+  `;
 
   const observationItems = data.observations.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   observations.innerHTML = `<div class="card"><strong>Observations</strong><ul>${observationItems}</ul></div>`;
@@ -59,7 +71,7 @@ function renderReply(data) {
   const stepCards = data.plan.steps.map((step) => `
     <div class="card">
       <strong>${escapeHtml(step.description)}</strong>
-      <p class="meta">Tool: ${escapeHtml(step.tool)} | Risk: ${escapeHtml(step.risk_level)} | Status: ${escapeHtml(step.status)}</p>
+      <p class="meta">Tool: ${escapeHtml(step.tool)} | Risk: ${escapeHtml(step.risk_score)} / 100 ${escapeHtml(step.risk_level)} | Status: ${escapeHtml(step.status)}</p>
       <p>${escapeHtml(step.preview || "")}</p>
     </div>
   `).join("");

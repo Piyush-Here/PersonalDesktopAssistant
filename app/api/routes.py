@@ -1,3 +1,5 @@
+from dataclasses import asdict
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -17,6 +19,11 @@ async def index(request: Request) -> HTMLResponse:
 @router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/api/model/status")
+async def model_status() -> dict[str, object]:
+    return asdict(assistant_service.model_status())
 
 
 @router.post("/api/request", response_model=AssistantReply)

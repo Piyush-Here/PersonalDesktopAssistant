@@ -7,6 +7,21 @@ from app.tools.file_search import FileSearchTool
 from app.tools.screen_inspector import ScreenInspectorTool
 
 
+DESKTOP_ACTION_TOOLS = {
+    "app_open",
+    "file_rename",
+    "file_move",
+    "file_copy",
+    "file_delete",
+    "file_write",
+    "desktop_click",
+    "desktop_click_target",
+    "desktop_type",
+    "desktop_type_target",
+    "desktop_hotkey",
+}
+
+
 class ToolRegistry:
     def __init__(self) -> None:
         self.file_search = FileSearchTool()
@@ -27,12 +42,12 @@ class ToolRegistry:
                 message="No direct tool matched. The assistant recommends narrowing the request.",
                 details=["Try specifying a file, app, or screen target."],
             )
-        if step.tool in {"app_open", "file_rename", "file_move", "file_copy", "file_delete", "file_write"}:
+        if step.tool in DESKTOP_ACTION_TOOLS:
             return self.desktop_actions.preview(step)
         return ExecutionResult(success=False, message=f"No preview tool available for {step.tool}.")
 
     def execute(self, step: PlanStep) -> ExecutionResult:
-        if step.tool in {"app_open", "file_rename", "file_move", "file_copy", "file_delete", "file_write"}:
+        if step.tool in DESKTOP_ACTION_TOOLS:
             return self.desktop_actions.execute(step)
         if step.tool == "file_search":
             return self.file_search.preview(step.target)
