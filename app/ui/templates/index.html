@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Personal Desktop Assistant</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">Windows-first local assistant</p>
+      <h1>Observe first. Act only after confirmation.</h1>
+      <p class="lede">Ask about local files, inspect supported documents, and preview desktop actions before anything changes.</p>
+    </section>
+
+    <section class="panel">
+      <form id="assistant-form">
+        <label for="mode">Mode</label>
+        <select id="mode" name="mode">
+          <option value="act">Act</option>
+          <option value="ask">Ask</option>
+          <option value="prepare">Prepare</option>
+        </select>
+
+        <label for="text">Request</label>
+        <textarea id="text" name="text" rows="4" placeholder='Example: Find my latest PPT and summarize it'></textarea>
+
+        <button type="submit">Plan Request</button>
+      </form>
+    </section>
+
+    <section class="panel hidden" id="response-panel">
+      <div id="summary"></div>
+      <div id="observations"></div>
+      <div id="steps"></div>
+      <div class="actions hidden" id="confirm-actions">
+        <button id="approve" class="approve" type="button">Confirm Execution</button>
+        <button id="reject" class="reject" type="button">Cancel</button>
+      </div>
+      <div id="execution"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
