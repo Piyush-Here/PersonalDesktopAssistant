@@ -26,6 +26,12 @@ async def model_status() -> dict[str, object]:
     return asdict(assistant_service.model_status())
 
 
+@router.get("/api/llm/status")
+async def llm_status() -> dict[str, object]:
+    """Returns current planner mode and LLM availability."""
+    return assistant_service.llm_status()
+
+
 @router.post("/api/request", response_model=AssistantReply)
 async def submit_request(payload: UserRequest) -> AssistantReply:
     return assistant_service.handle_request(payload)
@@ -37,3 +43,14 @@ async def confirm_request(payload: ConfirmationRequest) -> AssistantReply:
         return assistant_service.confirm_execution(payload)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/api/screenshot")
+async def take_screenshot() -> dict[str, object]:
+    """Capture screen in memory and return a description (no disk write)."""
+    result = assistant_service.screenshot.capture()
+    return {
+        "success": result.success,
+        "message": result.message,
+        "details": result.details,
+    }

@@ -7,40 +7,69 @@
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <main class="shell">
-    <section class="hero">
-      <p class="eyebrow">Windows-first local assistant</p>
-      <h1>Observe first. Act only after confirmation.</h1>
-      <p class="lede">Ask about local files, inspect supported documents, and preview desktop actions before anything changes.</p>
-    </section>
+  <div class="layout">
 
-    <section class="panel">
-      <form id="assistant-form">
-        <label for="mode">Mode</label>
-        <select id="mode" name="mode">
-          <option value="act">Act</option>
-          <option value="ask">Ask</option>
-          <option value="prepare">Prepare</option>
-        </select>
-
-        <label for="text">Request</label>
-        <textarea id="text" name="text" rows="4" placeholder='Example: Find my latest PPT and summarize it'></textarea>
-
-        <button type="submit">Plan Request</button>
-      </form>
-    </section>
-
-    <section class="panel hidden" id="response-panel">
-      <div id="summary"></div>
-      <div id="observations"></div>
-      <div id="steps"></div>
-      <div class="actions hidden" id="confirm-actions">
-        <button id="approve" class="approve" type="button">Confirm Execution</button>
-        <button id="reject" class="reject" type="button">Cancel</button>
+    <!-- ── Sidebar ─────────────────────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-icon">⬡</span>
+        <span class="brand-text">Desktop<br>Assistant</span>
       </div>
-      <div id="execution"></div>
-    </section>
-  </main>
+
+      <div class="sidebar-section">
+        <p class="sidebar-label">Planner</p>
+        <div id="llm-badge" class="badge badge-loading">checking…</div>
+      </div>
+
+      <div class="sidebar-section">
+        <p class="sidebar-label">Quick examples</p>
+        <ul class="example-list">
+          <li><button class="example-btn" data-text="Find my latest report and summarize it">Find &amp; summarize latest report</button></li>
+          <li><button class="example-btn" data-text="What is on my screen right now?">What's on my screen?</button></li>
+          <li><button class="example-btn" data-text='Copy "C:\temp\notes.txt" to "C:\temp\notes_backup.txt"'>Copy a file</button></li>
+          <li><button class="example-btn" data-text='press "ctrl+s"'>Press Ctrl+S</button></li>
+          <li><button class="example-btn" data-text='click "Save"'>Click "Save" button</button></li>
+          <li><button class="example-btn" data-text='type "Hello World" into "Search"'>Type into a field</button></li>
+        </ul>
+      </div>
+
+      <div class="sidebar-section sidebar-footer">
+        <p class="sidebar-label">Safety</p>
+        <p class="safety-note">All state-changing actions pause for confirmation. File delete is blocked.</p>
+      </div>
+    </aside>
+
+    <!-- ── Main ──────────────────────────────────────────────────── -->
+    <main class="main">
+
+      <!-- Chat history -->
+      <div class="chat-history" id="chat-history"></div>
+
+      <!-- Input area -->
+      <div class="input-area">
+        <div class="input-card">
+          <textarea
+            id="text"
+            rows="3"
+            placeholder="Tell me what to do — e.g. 'Find my budget spreadsheet and open it'"
+            autofocus
+          ></textarea>
+          <div class="input-controls">
+            <select id="mode" title="Request mode">
+              <option value="act">Act</option>
+              <option value="ask">Ask</option>
+              <option value="prepare">Prepare</option>
+            </select>
+            <button id="send-btn" type="button">
+              <span id="send-label">Send</span>
+              <span id="send-spinner" class="spinner hidden"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

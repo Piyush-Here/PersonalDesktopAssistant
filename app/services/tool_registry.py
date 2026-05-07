@@ -5,6 +5,7 @@ from app.tools.desktop_actions import DesktopActionsTool
 from app.tools.document_reader import DocumentReaderTool
 from app.tools.file_search import FileSearchTool
 from app.tools.screen_inspector import ScreenInspectorTool
+from app.tools.screenshot_tool import ScreenshotTool
 
 
 DESKTOP_ACTION_TOOLS = {
@@ -28,6 +29,7 @@ class ToolRegistry:
         self.document_reader = DocumentReaderTool()
         self.screen_inspector = ScreenInspectorTool()
         self.desktop_actions = DesktopActionsTool()
+        self.screenshot = ScreenshotTool()
 
     def inspect(self, step: PlanStep) -> ExecutionResult:
         if step.tool == "file_search":
@@ -35,7 +37,17 @@ class ToolRegistry:
         if step.tool == "document_read":
             return self.document_reader.preview(step.target)
         if step.tool == "screen_inspect":
-            return self.screen_inspector.preview(step.target)
+            # Full inspection: UIA + OCR + screenshot description
+            result = self.screen_inspector.preview(step.target)
+            shot   = self.screenshot.capture()
+            if shot.success:
+                combined = result.details + ["── Screenshot ──"] + shot.details
+                return ExecutionResult(
+                    success=result.success,
+                    message=result.message,
+                    details=combined,
+                )
+            return result
         if step.tool == "assistant_answer":
             return ExecutionResult(
                 success=True,
