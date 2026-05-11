@@ -1,3 +1,10 @@
+"""
+Deterministic planner — with compound-instruction chaining.
+
+A single instruction like:
+  "Open Notepad, type Hello World, then save it"
+produces 3 linked PlanSteps with sequence_index + depends_on set.
+"""
 from __future__ import annotations
 
 import re
@@ -7,269 +14,293 @@ from app.core.intent import extract_quoted_text, infer_mode
 from app.core.safety import assess_plan_risk, assess_step_risk
 from app.models.schemas import Plan, PlanStep, RequestMode, StepStatus, UserRequest
 
+_CHAIN_RE = re.compile(
+    r"\s*(?:,\s*(?:and\s+)?then|;\s*(?:and\s+)?then|,\s*after\s+that"
+    r")\s*",
+    re.IGNORECASE,
+)
+
+
+def split_compound(text: str) -> list[str]:
+    parts = _CHAIN_RE.split(text)
+    cleaned = [p.strip() for p in parts if p.strip()]
+    return cleaned if len(cleaned) > 1 else [text.strip()]
+
 
 class Planner:
     def build_plan(self, request: UserRequest) -> Plan:
+        segments = split_compound(request.text)
+        if len(segments) > 1:
+            return self._build_chain_plan(segments, request)
+        return self._build_single_plan(request.text, request)
+
+    def _build_chain_plan(self, segments: list[str], request: UserRequest) -> Plan:
+        steps: list[PlanStep] = []
+        prev_id: str | None = None
+        for idx, segment in enumerate(segments):
+            seg_steps = self._steps_for_segment(segment)
+            for step in seg_steps:
+                step.sequence_index = idx
+                step.depends_on = prev_id
+                if step.tool == "file_search":
+                    step.result_key = "last_file_path"
+                elif step.tool == "screen_inspect":
+                    step.result_key = "last_window_title"
+                elif step.tool == "app_open":
+                    step.result_key = "last_app"
+                steps.append(step)
+                prev_id = step.id
+        self._link_context_targets(steps)
+        risk_assessment = assess_plan_risk(steps)
+        n = len(segments)
+        summary = (
+            f"I planned a {n}-step chain. "
+            + ("Pausing before any state-changing action." if risk_assessment.requires_confirmation
+               else "All steps are read-only — executing immediately.")
+        )
+        return Plan(
+            summary=summary,
+            steps=steps,
+            requires_confirmation=risk_assessment.requires_confirmation,
+            risk_assessment=risk_assessment,
+            is_chain=True,
+        )
+
+    def _link_context_targets(self, steps: list[PlanStep]) -> None:
+        produced: set[str] = set()
+        for step in steps:
+            if (
+                step.tool in {"document_read", "app_open"}
+                and step.target in {"", "general request"}
+                and "last_file_path" in produced
+            ):
+                step.target = "{last_file_path}"
+                step.preview = (step.preview or "") + " [target resolved from previous step]"
+            if step.result_key:
+                produced.add(step.result_key)
+
+    def _build_single_plan(self, text: str, request: UserRequest) -> Plan:
         mode = infer_mode(request)
-        text = request.text.strip()
+        steps = self._steps_for_segment(text)
+        if not steps:
+            fallback_tool = "assistant_answer" if mode == RequestMode.ASK else "screen_inspect"
+            steps.append(self._make_step(
+                description="Interpret request and gather local context",
+                tool=fallback_tool,
+                target="general request",
+                preview="Will gather context and return a safe next action.",
+            ))
+        risk_assessment = assess_plan_risk(steps)
+        summary = self._build_summary(steps, mode)
+        return Plan(
+            summary=summary,
+            steps=steps,
+            requires_confirmation=risk_assessment.requires_confirmation,
+            risk_assessment=risk_assessment,
+            is_chain=False,
+        )
+
+    def _steps_for_segment(self, text: str) -> list[PlanStep]:
         text_lower = text.lower()
         steps: list[PlanStep] = []
 
-        if any(word in text_lower for word in ("find", "search", "latest", "newest")):
+        if any(w in text_lower for w in ("find", "search", "latest", "newest")):
             target = self._extract_target(text)
-            steps.append(
-                self._make_step(
-                    description=f"Search local files for {target}",
-                    tool="file_search",
-                    target=target,
-                    preview="Will inspect indexed folders and return matching files.",
-                )
-            )
+            steps.append(self._make_step(
+                description=f"Search local files for '{target}'",
+                tool="file_search",
+                target=target,
+                preview="Will search Desktop, Documents, Downloads and return matching files.",
+            ))
 
-        if any(word in text_lower for word in ("read", "summarize", "explain")):
+        if any(w in text_lower for w in ("read", "summarize", "explain")):
             target = self._extract_target(text)
-            steps.append(
-                self._make_step(
-                    description=f"Read accessible content for {target}",
-                    tool="document_read",
-                    target=target,
-                    preview="Will parse supported document types and summarize their content.",
-                )
-            )
+            steps.append(self._make_step(
+                description=f"Read and preview '{target}'",
+                tool="document_read",
+                target=target,
+                preview="Will parse the document and return a readable preview.",
+            ))
 
-        if "open" in text_lower or "launch" in text_lower:
+        if ("open" in text_lower or "launch" in text_lower) and not any(
+            w in text_lower for w in ("read", "summarize", "explain")
+        ):
             target = self._extract_target(text)
-            steps.append(
-                self._make_step(
-                    description=f"Open application or file {target}",
-                    tool="app_open",
-                    target=target,
-                    preview="Will resolve the file or app path, then wait for confirmation before opening.",
-                )
-            )
+            steps.append(self._make_step(
+                description=f"Open '{target}'",
+                tool="app_open",
+                target=target,
+                preview="Will resolve and open the file or app after confirmation.",
+            ))
 
-        if any(word in text_lower for word in ("rename", "move", "copy", "delete")):
+        if any(w in text_lower for w in ("rename", "move", "copy", "delete")):
             target = self._extract_target(text)
             tool = self._detect_file_action(text_lower)
             metadata = self._extract_file_action_metadata(text, tool)
-            description = f"Prepare {tool.replace('_', ' ')} operation for {target}"
-            preview = "Will gather targets and show the exact change before execution."
+            description = f"{tool.replace('_', ' ').title()}: '{target}'"
+            preview = "Will show the exact change before execution."
             if metadata.get("source_path") and metadata.get("destination_path"):
                 target = metadata["source_path"]
                 description = (
-                    f"Prepare {tool.replace('_', ' ')} from "
-                    f"{metadata['source_path']} to {metadata['destination_path']}"
+                    f"{tool.replace('_',' ').title()}: "
+                    f"'{metadata['source_path']}' → '{metadata['destination_path']}'"
                 )
-                preview = f"Source: {metadata['source_path']} | Destination: {metadata['destination_path']}"
-            steps.append(
-                self._make_step(
-                    description=description,
-                    tool=tool,
-                    target=target,
-                    preview=preview,
-                    metadata=metadata,
-                )
-            )
+                preview = f"Source: {metadata['source_path']} | Dest: {metadata['destination_path']}"
+            steps.append(self._make_step(
+                description=description, tool=tool, target=target,
+                preview=preview, metadata=metadata,
+            ))
 
         if "screen" in text_lower or "on screen" in text_lower:
-            steps.append(
-                self._make_step(
-                    description="Inspect active screen content",
-                    tool="screen_inspect",
-                    target="active screen",
-                    preview="Will capture current window metadata and screen text when available.",
-                )
-            )
+            steps.append(self._make_step(
+                description="Inspect active screen content",
+                tool="screen_inspect",
+                target="active screen",
+                preview="Will capture window metadata and visible text.",
+            ))
 
         desktop_step = self._build_desktop_action_step(text, text_lower)
         if desktop_step is not None:
             steps.append(desktop_step)
 
-        if not steps:
-            fallback_tool = "assistant_answer" if mode == RequestMode.ASK else "screen_inspect"
-            steps.append(
-                self._make_step(
-                    description="Interpret request and gather local context",
-                    tool=fallback_tool,
-                    target="general request",
-                    preview="Will gather context conservatively and return a safe next action.",
-                )
+        return steps
+
+    def _build_desktop_action_step(self, text: str, text_lower: str) -> PlanStep | None:
+        if re.search(r"\bsave\b", text_lower):
+            return self._make_step(
+                description="Save current document (Ctrl+S)",
+                tool="desktop_hotkey",
+                target="ctrl+s",
+                preview="Will press Ctrl+S in the active window after confirmation.",
+                metadata={"keys": ["ctrl", "s"]},
             )
 
-        risk_assessment = assess_plan_risk(steps)
-        confirmation_required = risk_assessment.requires_confirmation
-        summary = self._build_summary(steps, mode)
-        return Plan(
-            summary=summary,
-            steps=steps,
-            requires_confirmation=confirmation_required,
-            risk_assessment=risk_assessment,
-        )
+        if "click" in text_lower:
+            metadata = self._extract_click_metadata(text)
+            if metadata:
+                return self._make_step(
+                    description=f"Click at ({metadata['x']}, {metadata['y']})",
+                    tool="desktop_click",
+                    target=f"{metadata['x']},{metadata['y']}",
+                    preview=f"Will click x={metadata['x']}, y={metadata['y']} after confirmation.",
+                    metadata=metadata,
+                )
+            quoted = extract_quoted_text(text)
+            if quoted:
+                t = quoted[0]
+                return self._make_step(
+                    description=f"Click visible UI element '{t}'",
+                    tool="desktop_click_target",
+                    target=t,
+                    preview="Will resolve and click the named UI element after confirmation.",
+                    metadata={"target_text": t},
+                )
+            return self._make_step(
+                description="Click at screen coordinates",
+                tool="desktop_click",
+                target="screen coordinates",
+                preview="Will click the specified coordinates after confirmation.",
+            )
+
+        if any(w in text_lower for w in ("type", "enter text", "write text")):
+            meta2 = self._extract_type_into_target_metadata(text)
+            if meta2:
+                return self._make_step(
+                    description=f"Type '{meta2['text']}' into '{meta2['target_text']}'",
+                    tool="desktop_type_target",
+                    target=meta2["target_text"],
+                    preview="Will focus the named field and type the text after confirmation.",
+                    metadata=meta2,
+                )
+            meta1 = self._extract_type_metadata(text)
+            t = meta1.get("text", "")
+            preview = f"Will type '{t[:40]}{'…' if len(t)>40 else ''}' into the focused control."
+            return self._make_step(
+                description=f"Type '{t[:30]}{'…' if len(t)>30 else ''}'",
+                tool="desktop_type",
+                target="focused control",
+                preview=preview,
+                metadata=meta1,
+            )
+
+        if any(w in text_lower for w in ("hotkey", "shortcut", "press")):
+            meta = self._extract_hotkey_metadata(text)
+            keys = meta.get("keys", [])
+            return self._make_step(
+                description=f"Press {'+'.join(keys) if keys else '?'}",
+                tool="desktop_hotkey",
+                target="+".join(keys) or "keyboard",
+                preview=f"Will press {' + '.join(keys)} after confirmation." if keys else "Will press the key.",
+                metadata=meta,
+            )
+
+        return None
 
     def _extract_target(self, text: str) -> str:
         quoted = extract_quoted_text(text)
         if quoted:
             return quoted[0]
         words = text.split()
-        if len(words) <= 4:
-            return text
-        return " ".join(words[1:6])
+        return text if len(words) <= 4 else " ".join(words[1:6])
 
     def _detect_file_action(self, text_lower: str) -> str:
-        mapping = {
-            "rename": "file_rename",
-            "move": "file_move",
-            "copy": "file_copy",
-            "delete": "file_delete",
-        }
-        for keyword, tool in mapping.items():
-            if keyword in text_lower:
+        for kw, tool in (("rename","file_rename"),("move","file_move"),("copy","file_copy"),("delete","file_delete")):
+            if kw in text_lower:
                 return tool
         return "file_write"
 
     def _extract_file_action_metadata(self, text: str, tool: str) -> dict[str, str]:
         if tool == "file_delete":
             return {}
-
         quoted = extract_quoted_text(text)
         if len(quoted) >= 2:
-            source = quoted[0]
-            destination = quoted[1]
+            src, dst = quoted[0], quoted[1]
             if tool == "file_rename":
-                destination_path = Path(destination)
-                if not destination_path.is_absolute() and destination_path.parent == Path("."):
-                    destination = str(Path(source).expanduser().with_name(destination))
-            return {"source_path": source, "destination_path": destination}
-
+                dp = Path(dst)
+                if not dp.is_absolute() and dp.parent == Path("."):
+                    dst = str(Path(src).expanduser().with_name(dst))
+            return {"source_path": src, "destination_path": dst}
         return {}
 
-    def _build_desktop_action_step(self, text: str, text_lower: str) -> PlanStep | None:
-        if "click" in text_lower:
-            metadata = self._extract_click_metadata(text)
-            if metadata:
-                return self._make_step(
-                    description="Click explicit screen coordinates",
-                    tool="desktop_click",
-                    target=f"{metadata['x']},{metadata['y']}",
-                    preview=f"Will click x={metadata['x']}, y={metadata['y']} after confirmation.",
-                    metadata=metadata,
-                )
-
-            quoted = extract_quoted_text(text)
-            if quoted:
-                target_text = quoted[0]
-                return self._make_step(
-                    description=f"Resolve and click visible UI target {target_text}",
-                    tool="desktop_click_target",
-                    target=target_text,
-                    preview="Will inspect visible controls, propose a resolved target, and wait for confirmation.",
-                    metadata={"target_text": target_text},
-                )
-
-            return self._make_step(
-                description="Click explicit screen coordinates",
-                tool="desktop_click",
-                target="screen coordinates",
-                preview="Will click the explicit screen coordinates after confirmation.",
-                metadata={},
-            )
-
-        if any(word in text_lower for word in ("type", "enter text", "write text")):
-            metadata = self._extract_type_into_target_metadata(text)
-            if metadata:
-                return self._make_step(
-                    description=f"Resolve visible UI target {metadata['target_text']} and type text",
-                    tool="desktop_type_target",
-                    target=metadata["target_text"],
-                    preview="Will inspect visible controls, focus the resolved target, type quoted text, and wait for confirmation.",
-                    metadata=metadata,
-                )
-
-            metadata = self._extract_type_metadata(text)
-            preview = "Will type the quoted text into the focused control after confirmation."
-            if metadata.get("text"):
-                preview = f"Will type {len(metadata['text'])} character(s) into the focused control."
-            return self._make_step(
-                description="Type text into focused control",
-                tool="desktop_type",
-                target="focused control",
-                preview=preview,
-                metadata=metadata,
-            )
-
-        if any(word in text_lower for word in ("hotkey", "shortcut", "press")):
-            metadata = self._extract_hotkey_metadata(text)
-            preview = "Will press the explicit key or key combination after confirmation."
-            if metadata.get("keys"):
-                preview = f"Will press {' + '.join(metadata['keys'])} after confirmation."
-            return self._make_step(
-                description="Press explicit key or hotkey",
-                tool="desktop_hotkey",
-                target="+".join(metadata.get("keys", [])) or "keyboard",
-                preview=preview,
-                metadata=metadata,
-            )
-
-        return None
-
     def _extract_click_metadata(self, text: str) -> dict[str, int]:
-        match = re.search(r"\b(?:x\s*=?\s*)?(-?\d{1,5})\s*[, ]\s*(?:y\s*=?\s*)?(-?\d{1,5})\b", text, re.I)
-        if not match:
-            return {}
-        return {"x": int(match.group(1)), "y": int(match.group(2))}
+        m = re.search(r"\b(?:x\s*=?\s*)?(-?\d{1,5})\s*[, ]\s*(?:y\s*=?\s*)?(-?\d{1,5})\b", text, re.I)
+        return {"x": int(m.group(1)), "y": int(m.group(2))} if m else {}
 
     def _extract_type_metadata(self, text: str) -> dict[str, str]:
-        quoted = extract_quoted_text(text)
-        if not quoted:
-            return {}
-        return {"text": quoted[0]}
+        q = extract_quoted_text(text)
+        return {"text": q[0]} if q else {}
 
     def _extract_type_into_target_metadata(self, text: str) -> dict[str, str]:
-        quoted = extract_quoted_text(text)
-        if len(quoted) < 2 or " into " not in text.lower():
+        q = extract_quoted_text(text)
+        if len(q) < 2 or " into " not in text.lower():
             return {}
-        return {"text": quoted[0], "target_text": quoted[1]}
+        return {"text": q[0], "target_text": q[1]}
 
     def _extract_hotkey_metadata(self, text: str) -> dict[str, list[str]]:
-        quoted = extract_quoted_text(text)
-        raw_keys = quoted[0] if quoted else text
-        key_match = re.search(r"\b(?:press|hotkey|shortcut)\s+(.+)$", raw_keys, re.I)
-        if key_match:
-            raw_keys = key_match.group(1)
+        q = extract_quoted_text(text)
+        raw = q[0] if q else text
+        m = re.search(r"\b(?:press|hotkey|shortcut)\s+(.+)$", raw, re.I)
+        if m:
+            raw = m.group(1)
         keys = [
-            self._normalize_key(part)
-            for part in re.split(r"\s*(?:\+|,|\band\b)\s*", raw_keys.strip(), flags=re.I)
-            if part.strip()
+            self._normalize_key(p)
+            for p in re.split(r"\s*(?:\+|,|\band\b)\s*", raw.strip(), flags=re.I)
+            if p.strip()
         ]
         return {"keys": keys} if keys else {}
 
     def _normalize_key(self, key: str) -> str:
-        aliases = {
-            "control": "ctrl",
-            "ctl": "ctrl",
-            "escape": "esc",
-            "return": "enter",
-            "windows": "win",
-        }
-        normalized = key.strip().lower().replace(" ", "")
-        return aliases.get(normalized, normalized)
+        aliases = {"control":"ctrl","ctl":"ctrl","escape":"esc","return":"enter","windows":"win"}
+        n = key.strip().lower().replace(" ", "")
+        return aliases.get(n, n)
 
-    def _make_step(
-        self,
-        description: str,
-        tool: str,
-        target: str,
-        preview: str,
-        metadata: dict[str, str] | None = None,
-    ) -> PlanStep:
+    def _make_step(self, description: str, tool: str, target: str,
+                   preview: str, metadata: dict | None = None) -> PlanStep:
         step = PlanStep(
-            description=description,
-            tool=tool,
+            description=description, tool=tool,
             target=target or str(Path.home()),
-            risk_level="low",
-            requires_confirmation=False,
-            status=StepStatus.READY,
-            preview=preview,
+            risk_level="low", requires_confirmation=False,
+            status=StepStatus.READY, preview=preview,
             metadata=metadata or {},
         )
         risk = assess_step_risk(step)
@@ -280,8 +311,9 @@ class Planner:
         return step
 
     def _build_summary(self, steps: list[PlanStep], mode: RequestMode) -> str:
+        n = len(steps)
         if mode == RequestMode.ASK:
-            return f"I interpreted this as a read-only request and prepared {len(steps)} step(s)."
-        if any(step.requires_confirmation for step in steps):
-            return f"I prepared {len(steps)} step(s) and paused before any state-changing action."
-        return f"I prepared {len(steps)} step(s) for immediate execution."
+            return f"Read-only request — planned {n} step(s)."
+        if any(s.requires_confirmation for s in steps):
+            return f"Planned {n} step(s) — pausing before any state-changing action."
+        return f"Planned {n} step(s) — executing immediately (read-only)."

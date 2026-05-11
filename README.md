@@ -1,113 +1,191 @@
 # Personal Desktop Assistant
 
-A Windows-first, confirmation-first local assistant that can inspect accessible content, propose actions, and execute only after user approval.
+> A Windows-first, confirmation-first local AI assistant that inspects your screen, reads your files, and executes desktop actions — but only after you approve every step.
 
-## V1 capabilities
+<!-- DEMO: replace this line with your demo GIF/screenshot once recorded -->
+<!-- ![Demo](docs/demo.gif) -->
 
-- Natural language request intake
-- Intent classification into ask/prepare/act
-- Action planning with confirmation gates
-- Local file search
-- Document reading for `txt`, `md`, `pdf`, `docx`, `pptx`, `xlsx`, `csv`
-- Session logging
-- Minimal browser UI for chat, plan preview, and confirmation
+**[▶ Watch the demo](#)** &nbsp;·&nbsp; **[Quick start](#quick-start)** &nbsp;·&nbsp; **[Capabilities](#capabilities)**
 
-## Phase 2 capabilities
+---
 
-- Quoted source and destination parsing for file copy, move, and rename requests
-- Exact file-operation previews before confirmation
-- Confirmed execution for copy, move, and rename
-- Overwrite protection for file operations
-- Chain-level risk score and risk reasons before approval
-- Local model provider boundary with deterministic fallback
+## What it does
 
-## Phase 3 capabilities
+You type a plain-English instruction. The assistant:
 
-- Read-only active window metadata inspection on Windows
-- In-memory screenshot availability check
-- Optional local OCR text preview through Tesseract
-- Optional Windows UI Automation control listing through pywinauto
+1. **Classifies** your intent (read-only vs. state-changing)
+2. **Plans** a sequence of tool steps
+3. **Risk-scores** each step from 0–100
+4. **Previews** everything — nothing runs yet
+5. **Waits** for your confirmation on any action that changes state
+6. **Executes** only after you approve
 
-## Phase 4 capabilities
+Nothing is ever executed without you seeing the plan and risk score first.
 
-- Confirmed desktop click by explicit screen coordinates
-- Confirmed typing of explicit quoted text into the focused control
-- Confirmed key or hotkey press by explicit key names
-- PyAutoGUI failsafe enabled for pointer actions
-
-## Phase 5 capabilities
-
-- Resolve visible UI controls by quoted text through Windows UI Automation
-- Preview the matched control type, bounds, and click point before approval
-- Refuse target-text clicks when no exact visible target can be resolved
-
-## Phase 6 capabilities
-
-- Resolve visible UI fields by quoted text before typing
-- Preview the matched field/control bounds and focus point before approval
-- Click the resolved field and type explicit text only after confirmation
-- Refuse targeted typing when no exact visible target can be resolved
+---
 
 ## Quick start
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+# Clone and enter the project
+cd PersonalAssistant
+
+# One-command setup (creates venv + installs all deps)
+.\setup.ps1
+
+# Start the server
+.\run.ps1
+
+# Open in browser
+start http://127.0.0.1:8000
 ```
 
-Open `http://127.0.0.1:8000`.
-
-## Local model mode
-
-The assistant defaults to the deterministic local planner. To connect a local Ollama model, set:
-
+**With Ollama LLM planner (optional):**
 ```powershell
-$env:LOCAL_MODEL_PROVIDER="ollama"
-$env:LOCAL_MODEL_NAME="llama3.1"
-$env:LOCAL_MODEL_ENDPOINT="http://127.0.0.1:11434"
+.\run.ps1 -llm -model llama3.1
 ```
 
-Only localhost model endpoints are accepted. Non-local model URLs are refused.
+**Create demo files (needed for Demo 1 and Demo 2):**
+```powershell
+python demo_setup.py
+```
 
-## Screen observation mode
+---
 
-Screen inspection is local and read-only. Screenshot data is inspected in memory and is not saved by the assistant.
+## Capabilities
 
-Optional adapters:
+| Feature | Status | Notes |
+|---|---|---|
+| Natural language intent classification | ✅ Core | Always on |
+| Deterministic action planner | ✅ Core | Always on, no LLM needed |
+| Risk scoring (0–100) per step | ✅ Core | Always on |
+| Confirmation gate for all writes | ✅ Core | Cannot be bypassed |
+| File search (Desktop, Documents, Downloads) | ✅ Core | |
+| Document reading (.txt .md .csv .pdf .docx .pptx .xlsx) | ✅ Core | |
+| Session logging (local JSON) | ✅ Core | |
+| Screen inspection (active window metadata) | ✅ Core (Windows) | Via ctypes |
+| Screenshot capture | ✅ Optional | `pip install pillow` |
+| Hotkey / keyboard automation | ✅ Optional | `pip install pyautogui` |
+| Mouse click by coordinates | ✅ Optional | `pip install pyautogui` |
+| UI element click by visible text | ✅ Optional | `pip install pywinauto` |
+| Typed input into named UI field | ✅ Optional | `pip install pywinauto` |
+| OCR text extraction from screen | ✅ Optional | `pip install pytesseract` + Tesseract binary |
+| LLM planner (Ollama) | ✅ Optional | Set `LOCAL_MODEL_PROVIDER=ollama` |
+| Vision model screen description (llava) | ✅ Optional | Ollama + llava model |
 
-- `pillow` enables screenshot capture.
-- `pywinauto` enables Windows UI Automation control discovery.
-- `pytesseract` enables OCR when the local Tesseract engine is installed and available on PATH.
+---
 
-## Desktop action mode
+## Three demo flows
 
-Desktop actions are write-capable and always require confirmation after risk review.
+### Demo 1 — Find and read a document (read-only, no confirmation needed)
+```
+Find my budget report and summarize it
+```
+Shows: intent classification → file search → document read → automatic execution → result.
 
-Supported explicit forms:
+### Demo 2 — File copy with confirmation gate
+```
+Copy "C:\Users\Me\Documents\notes.txt" to "C:\Users\Me\Desktop\notes_backup.txt"
+```
+Shows: plan preview → risk score (MEDIUM) → step cards → Confirm button → execution result.
 
-```text
-click x=420 y=260
-click "Save"
-type "hello world"
-type "Piyush" into "Name"
+### Demo 3 — Screen inspect + hotkey (requires pillow + pyautogui)
+```
+What is on my screen right now?
 press "ctrl+s"
 ```
+Shows: active window inspection → screenshot observation → desktop action → HIGH risk confirmation → Save dialog appears.
 
-For target-text clicks and targeted typing, the assistant inspects visible UI Automation controls in the active window and proposes the exact click or focus point before confirmation. It does not execute if the target cannot be resolved.
+---
 
-## Notes
+## Project structure
 
-- The current V1 is deterministic and local-first. It does not depend on an LLM yet.
-- `app_open` can execute after confirmation when the target path exists.
-- Any state-changing chain requires user confirmation after the risk score is shown.
-- File delete and inferred write-capable UI automation are intentionally staged and not fully enabled yet.
-- File copy, move, and rename require explicit quoted paths, for example `copy "C:\source.txt" to "C:\target.txt"`.
+```
+app/
+├── api/routes.py          ← HTTP endpoints
+├── core/
+│   ├── intent.py          ← ASK / PREPARE / ACT classifier
+│   ├── planner.py         ← Deterministic keyword planner
+│   ├── llm_planner.py     ← Ollama LLM planner (opt-in)
+│   └── safety.py          ← Risk scoring (0–100)
+├── services/
+│   ├── assistant_service.py  ← Orchestration layer
+│   ├── local_model.py        ← Ollama status checker
+│   ├── session_store.py      ← Local JSON session log
+│   └── tool_registry.py      ← Routes steps to tools
+├── tools/
+│   ├── file_search.py        ← Search Desktop/Documents/Downloads
+│   ├── document_reader.py    ← Read txt/md/pdf/docx/pptx/xlsx/csv
+│   ├── screen_inspector.py   ← Active window + UIA + OCR
+│   ├── screenshot_tool.py    ← In-memory screenshot + vision
+│   └── desktop_actions.py    ← Click/type/hotkey/file ops
+└── ui/                       ← Single-page browser frontend
+```
 
-## Next engineering steps
+---
 
-- Add real Windows UI Automation and OCR adapters
-- Add Playwright browser automation
-- Add a tool-calling LLM layer for stronger intent extraction
-- Add broader natural-language file-operation parsing beyond quoted paths
+## Safety design
+
+- Every file and desktop action requires confirmation after risk review
+- The full plan, risk score, and risk reasons are shown before any confirmation prompt
+- File delete is intentionally blocked in V1
+- File overwrites are refused
+- Target-text clicks refuse to execute if the UI control cannot be resolved
+- Non-localhost model endpoints are refused — only 127.0.0.1 and localhost accepted
+- Screenshots are captured in memory and never saved to disk by default
+- PyAutoGUI failsafe is enabled — move mouse to screen corner to abort any pointer action
+
+---
+
+## Optional Ollama setup
+
+```powershell
+# Install Ollama from https://ollama.com
+ollama pull llama3.1           # text planner
+ollama pull llava              # optional: vision model for screen description
+
+# Start with LLM planner
+.\run.ps1 -llm -model llama3.1
+```
+
+The sidebar badge turns blue when the LLM planner is active. Without the env vars it stays green (Deterministic) and everything works the same.
+
+---
+
+## Testing
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pytest tests -p no:cacheprovider -v
+```
+
+Expected: **24 tests passing**.
+
+---
+
+## Known limitations
+
+- **Scope**: V1 targets explicit, bounded instructions. Ambiguous or complex multi-step goals may not plan correctly without the optional LLM planner configured.
+- **Desktop automation**: Target-text UI actions depend on the target application exposing controls via Windows Accessibility APIs. Applications with elevated privileges or custom UI frameworks may not be supported.
+- **OCR**: Requires the Tesseract OCR engine installed separately as a binary. The `pytesseract` Python package alone is not sufficient.
+- **Platform**: Screen inspection and desktop automation require Windows. The FastAPI server and file tools run on any platform.
+- **File search scope**: Searches Desktop, Documents, and Downloads only. Files in other locations require an explicit full path.
+- **LLM planning**: Opt-in. Requires a locally running Ollama instance. The deterministic planner is the default and works without any model infrastructure.
+- **Concurrency**: The session store is single-threaded in V1. Not designed for concurrent multi-user use.
+
+---
+
+## Roadmap
+
+- [ ] Multi-step chain approval (open Notepad → type → save as one confirmed chain)
+- [ ] Before/after screenshot diff displayed after action execution
+- [ ] Browser automation via Playwright
+- [ ] Window management (focus, minimize, maximize, switch)
+- [ ] Richer natural-language parsing beyond deterministic keyword matching
+- [ ] PyInstaller / NSIS packaging with a desktop shortcut
+
+---
+
+## Built with
+
+Python 3.12 · FastAPI · Pydantic v2 · Jinja2 · pyautogui · pywinauto · Pillow · PyMuPDF · python-docx · openpyxl · python-pptx

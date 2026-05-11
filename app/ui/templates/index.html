@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Personal Desktop Assistant</title>
+  <title>Desktop Assistant</title>
+  <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -12,7 +13,7 @@
     <!-- ── Sidebar ─────────────────────────────────────────────── -->
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <span class="brand-icon">⬡</span>
+        <img src="/static/icon.svg" alt="logo" class="brand-logo">
         <span class="brand-text">Desktop<br>Assistant</span>
       </div>
 
@@ -22,36 +23,50 @@
       </div>
 
       <div class="sidebar-section">
+        <p class="sidebar-label">Capabilities</p>
+        <div id="caps-list" class="caps-list">
+          <span class="cap-item cap-loading">checking…</span>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
         <p class="sidebar-label">Quick examples</p>
         <ul class="example-list">
-          <li><button class="example-btn" data-text="Find my latest report and summarize it">Find &amp; summarize latest report</button></li>
+          <li><button class="example-btn" data-text="Find my latest report and summarize it">Find &amp; summarize report</button></li>
+          <li><button class="example-btn" data-text="Search for budget in my Documents">Search for budget</button></li>
           <li><button class="example-btn" data-text="What is on my screen right now?">What's on my screen?</button></li>
-          <li><button class="example-btn" data-text='Copy "C:\temp\notes.txt" to "C:\temp\notes_backup.txt"'>Copy a file</button></li>
+          <li><button class="example-btn" data-text='Copy "C:\Users\Me\Documents\notes.txt" to "C:\Users\Me\Desktop\notes_backup.txt"'>Copy a file</button></li>
           <li><button class="example-btn" data-text='press "ctrl+s"'>Press Ctrl+S</button></li>
-          <li><button class="example-btn" data-text='click "Save"'>Click "Save" button</button></li>
-          <li><button class="example-btn" data-text='type "Hello World" into "Search"'>Type into a field</button></li>
+        </ul>
+      </div>
+
+      <div class="sidebar-section">
+        <p class="sidebar-label">⛓ Chain examples</p>
+        <ul class="example-list">
+          <li><button class="example-btn" data-text='Open Notepad, type "Hello World", then save it'>Open → Type → Save</button></li>
+          <li><button class="example-btn" data-text="Find my budget report, then read it">Find → Read</button></li>
+          <li><button class="example-btn" data-text='click "Save", then press "ctrl+w"'>Click Save → Close</button></li>
+          <li><button class="example-btn" data-text='Copy "C:\Users\Me\Documents\notes.txt" to "C:\Users\Me\Desktop\notes_backup.txt", then open it'>Copy → Open</button></li>
         </ul>
       </div>
 
       <div class="sidebar-section sidebar-footer">
         <p class="sidebar-label">Safety</p>
-        <p class="safety-note">All state-changing actions pause for confirmation. File delete is blocked.</p>
+        <p class="safety-note">All state-changing actions pause for confirmation. File delete is blocked. Risk scored 0–100 before every action.</p>
+        <button class="settings-btn" onclick="openSettings()">⚙ Settings</button>
       </div>
     </aside>
 
     <!-- ── Main ──────────────────────────────────────────────────── -->
     <main class="main">
-
-      <!-- Chat history -->
       <div class="chat-history" id="chat-history"></div>
 
-      <!-- Input area -->
       <div class="input-area">
         <div class="input-card">
           <textarea
             id="text"
             rows="3"
-            placeholder="Tell me what to do — e.g. 'Find my budget spreadsheet and open it'"
+            placeholder="Tell me what to do — e.g. 'Find my budget spreadsheet and summarize it'"
             autofocus
           ></textarea>
           <div class="input-controls">
@@ -67,8 +82,39 @@
           </div>
         </div>
       </div>
-
     </main>
+  </div>
+
+  <!-- ── Settings modal ──────────────────────────────────────────── -->
+  <div id="settings-overlay" class="modal-overlay hidden" onclick="closeSettings(event)">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span class="modal-title">Settings</span>
+        <button class="modal-close" onclick="closeSettings()">✕</button>
+      </div>
+
+      <div class="modal-section">
+        <label class="modal-label">Safety level</label>
+        <select id="setting-safety" class="modal-select">
+          <option value="standard">Standard — confirm all writes (recommended)</option>
+          <option value="strict">Strict — confirm everything including reads</option>
+        </select>
+      </div>
+
+      <div class="modal-section">
+        <label class="modal-label">LLM planner (Ollama)</label>
+        <p class="modal-hint">To enable, start Ollama and set <code>LOCAL_MODEL_PROVIDER=ollama</code> before launching the server. The sidebar badge will turn blue when active.</p>
+      </div>
+
+      <div class="modal-section">
+        <label class="modal-label">Session data</label>
+        <p class="modal-hint">Sessions are saved locally under <code>data/sessions/</code>. They are never sent anywhere.</p>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-approve" onclick="closeSettings()">Done</button>
+      </div>
+    </div>
   </div>
 
   <script src="/static/app.js"></script>

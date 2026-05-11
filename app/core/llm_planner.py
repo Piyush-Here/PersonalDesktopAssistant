@@ -27,6 +27,7 @@ LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _SYSTEM_PROMPT = """
 You are a planner for a Windows desktop assistant.
 Your only job is to convert a user's English instruction into a JSON array of tool-call objects.
+Multi-step compound instructions should produce MULTIPLE objects in the correct sequence.
 
 Available tools:
   file_search        – search local files  {target: string}
@@ -44,11 +45,13 @@ Available tools:
 
 Rules:
 1. Respond with ONLY a valid JSON array, no prose, no markdown fences.
-2. Each element must be {"tool": "<name>", "description": "<short description>", "metadata": {<params>}}.
+2. Each element: {"tool": "<name>", "description": "<short description>", "metadata": {<params>}, "sequence_index": <int>}.
 3. Use only the tools listed above.
-4. If the instruction is a pure question or read-only request, prefer file_search + document_read.
-5. Do not invent file paths unless the user explicitly stated them.
-6. If you cannot map the instruction to any tool, return [{"tool":"assistant_answer","description":"Could not map to a specific tool","metadata":{}}].
+4. Compound instructions ("open X, then type Y, then save") → multiple objects in order.
+5. "save it" or "save the file" → desktop_hotkey with keys ["ctrl","s"].
+6. If the instruction is read-only, prefer file_search + document_read.
+7. Do not invent file paths unless the user stated them explicitly.
+8. If unmappable: [{"tool":"assistant_answer","description":"Could not map","metadata":{},"sequence_index":0}].
 """.strip()
 
 
@@ -152,8 +155,17 @@ class LLMPlanner:
             "assistant_answer",
         }
 
+        # Result-key mapping for context chaining
+        result_keys = {
+            "file_search": "last_file_path",
+            "screen_inspect": "last_window_title",
+            "app_open": "last_app",
+        }
+
         steps: list[PlanStep] = []
-        for raw in raw_steps:
+        prev_id: str | None = None
+
+        for idx, raw in enumerate(raw_steps):
             tool = raw.get("tool", "").strip()
             if tool not in known_tools:
                 log.warning("LLM returned unknown tool '%s'; skipping.", tool)
@@ -161,8 +173,8 @@ class LLMPlanner:
 
             description = str(raw.get("description", tool))
             metadata: dict[str, Any] = raw.get("metadata", {}) or {}
+            seq_idx = int(raw.get("sequence_index", idx))
 
-            # Derive target string from metadata or description
             target = (
                 metadata.get("target")
                 or metadata.get("target_text")
@@ -179,6 +191,9 @@ class LLMPlanner:
                 status=StepStatus.READY,
                 preview=f"LLM-planned: {description}",
                 metadata=metadata,
+                sequence_index=seq_idx,
+                depends_on=prev_id,
+                result_key=result_keys.get(tool),
             )
             risk = assess_step_risk(step)
             step.risk_level = risk.level
@@ -186,15 +201,22 @@ class LLMPlanner:
             step.risk_reasons = risk.reasons
             step.requires_confirmation = risk.requires_confirmation
             steps.append(step)
+            prev_id = step.id
 
         if not steps:
             return None
 
+        is_chain = len(steps) > 1
         risk_assessment = assess_plan_risk(steps)
-        mode = request.mode
         n = len(steps)
-        if any(s.requires_confirmation for s in steps):
-            summary = f"LLM planned {n} step(s) and paused before any state-changing action."
+        if is_chain:
+            summary = (
+                f"LLM planned a {n}-step chain. "
+                + ("Pausing before any state-changing action." if risk_assessment.requires_confirmation
+                   else "All steps are read-only.")
+            )
+        elif any(s.requires_confirmation for s in steps):
+            summary = f"LLM planned {n} step(s) — pausing before any state-changing action."
         else:
             summary = f"LLM planned {n} step(s) for read-only execution."
 
@@ -203,4 +225,5 @@ class LLMPlanner:
             steps=steps,
             requires_confirmation=risk_assessment.requires_confirmation,
             risk_assessment=risk_assessment,
+            is_chain=is_chain,
         )

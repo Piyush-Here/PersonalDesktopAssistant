@@ -45,6 +45,10 @@ class PlanStep(BaseModel):
     status: StepStatus = StepStatus.PENDING
     preview: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # ── Chaining fields ──────────────────────────────────────────────────────
+    sequence_index: int = 0          # position in the chain (0-based)
+    depends_on: str | None = None    # id of the preceding step
+    result_key: str | None = None    # context key this step's output is stored under
 
 
 class RiskAssessment(BaseModel):
@@ -59,12 +63,17 @@ class Plan(BaseModel):
     steps: list[PlanStep]
     requires_confirmation: bool
     risk_assessment: RiskAssessment
+    is_chain: bool = False           # True when 2+ steps are linked
 
 
 class ExecutionResult(BaseModel):
     success: bool
     message: str
     details: list[str] = Field(default_factory=list)
+    # per-step results when running a chain
+    step_results: list[dict[str, Any]] = Field(default_factory=list)
+    # shared context produced by the chain (e.g. resolved file paths)
+    chain_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class ActionSession(BaseModel):
